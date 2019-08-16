@@ -42,6 +42,10 @@
 #include "maptools.h"
 #include "geometry.h"  // for vec3
 
+#ifdef ENABLE_DYNAMIC_ASDF
+#include "dynamic_scene.h"
+#endif
+
 #ifndef SSR_QUERY_POLICY
 #define SSR_QUERY_POLICY apf::disable_queries
 #endif
@@ -156,6 +160,13 @@ class RendererBase : public apf::MimoProcessor<Derived
         DataMember _member;
     };
 
+#ifdef ENABLE_DYNAMIC_ASDF
+    struct Process;
+
+    std::vector<std::string>
+    load_dynamic_scene(const std::string& scene_file_name);
+#endif
+
     template<typename L, typename ListProxy, typename DataMember>
     void add_to_sublist(const L& input, ListProxy output, DataMember member)
     {
@@ -199,7 +210,8 @@ class RendererBase : public apf::MimoProcessor<Derived
     }
 
     std::string add_source(id_t id
-        , const apf::parameter_map& p = apf::parameter_map());
+        , const apf::parameter_map& p = apf::parameter_map()
+        , const float* file_source_ptr = nullptr);
     void rem_source(id_t id);
     void rem_all_sources();
 
@@ -217,6 +229,12 @@ class RendererBase : public apf::MimoProcessor<Derived
     auto get_scoped_lock() { return std::make_unique<ScopedLock>(_lock); }
 
     const sample_type master_volume_correction;  // linear
+
+#ifdef ENABLE_DYNAMIC_ASDF
+    using dynamic_source_list_t = std::vector<std::optional<ssr::Transform>>;
+    // NB: It's probably not a good idea to make this public:
+    apf::SharedData<std::unique_ptr<dynamic_source_list_t>> dynamic_sources;
+#endif
 
   protected:
     RendererBase(const apf::parameter_map& p);
@@ -242,6 +260,20 @@ class RendererBase : public apf::MimoProcessor<Derived
     size_t _next_id_suffix = 0;
 
     std::mutex _lock;
+
+#ifdef ENABLE_DYNAMIC_ASDF
+    int jack_sync_callback(jack_transport_state_t
+        , jack_position_t *pos) override
+    {
+      if (_scene == nullptr)
+      {
+        return 1;
+      }
+      return _scene.get()->seek(pos->frame);
+    }
+
+    apf::SharedData<std::unique_ptr<DynamicScene>> _scene;
+#endif
 };
 
 /** Constructor.
@@ -253,9 +285,15 @@ RendererBase<Derived>::RendererBase(const apf::parameter_map& p)
   , state(_fifo, p)
   , master_volume_correction(apf::math::dB2linear(
         this->params.get("master_volume_correction", 0.0)))
+#ifdef ENABLE_DYNAMIC_ASDF
+  , dynamic_sources(_fifo)
+#endif
   , _master_level()
   , _source_list(_fifo)
   , _show_head(true)
+#ifdef ENABLE_DYNAMIC_ASDF
+  , _scene(_fifo)
+#endif
 {}
 
 /** Create a new source.
@@ -265,7 +303,7 @@ RendererBase<Derived>::RendererBase(const apf::parameter_map& p)
 template<typename Derived>
 std::string
 RendererBase<Derived>::add_source(id_t requested_id
-    , const apf::parameter_map& p)
+    , const apf::parameter_map& p, const float* file_source_ptr)
 {
   std::string id = requested_id;
   if (id.size() && _source_map.find(id) != _source_map.end())
@@ -281,29 +319,41 @@ RendererBase<Derived>::add_source(id_t requested_id
     while (_source_map.find(id) != _source_map.end());
   }
 
-  typename Derived::Input::Params in_params;
-  in_params = p;
-  auto in = this->add(in_params);
-
-  // WARNING: if Derived::Input throws an exception, the SSR crashes!
-
   typename Derived::Source::Params src_params;
   src_params = p;
   src_params.parent = &this->derived();
   src_params.fifo = &_fifo;
-  src_params.input = in;
   src_params.id = id;
 
-  typename Derived::Source* src;
+  if (file_source_ptr == nullptr)
+  {
+    typename Derived::Input::Params in_params;
+    in_params = p;
+    auto in = this->add(in_params);
+    // WARNING: if Derived::Input throws an exception, the SSR crashes!
+    src_params.input = in;
+  }
+  else
+  {
+#ifdef ENABLE_DYNAMIC_ASDF
+    src_params.file_source_ptr = file_source_ptr;
+#else
+    assert(false);
+#endif
+  }
 
+  typename Derived::Source* src;
   try
   {
     src = _source_list.add(new typename Derived::Source(src_params));
   }
   catch (...)
   {
-    // TODO: really remove the corresponding Input?
-    this->rem(in);
+    if (src_params.input)
+    {
+      auto* input = const_cast<typename Derived::Input*>(src_params.input);
+      this->rem(input);
+    }
     throw;
   }
 
@@ -334,13 +384,16 @@ void RendererBase<Derived>::rem_source(id_t id)
   assert(source);
   source->derived().disconnect();
 
-  auto input = const_cast<typename Derived::Input*>(&source->_input);
+  auto* input = const_cast<typename Derived::Input*>(source->_input);
   _source_list.rem(source);
 
   // TODO: really remove the corresponding Input?
   // ATTENTION: there may be several sources using the input! (or not?)
 
-  this->rem(input);
+  if (input != nullptr)
+  {
+    this->rem(input);
+  }
 }
 
 template<typename Derived>
@@ -368,6 +421,169 @@ RendererBase<Derived>::get_source(id_t id)
   }
 }
 
+
+#ifdef ENABLE_DYNAMIC_ASDF
+// NB: The APF_PROCESS macro doesn't work here because of the use of CRTP.
+template<typename Derived>
+struct RendererBase<Derived>::Process : _base::Process
+{
+  Process(Derived& parent)
+    : _base::Process(parent)
+  {
+    const auto& scene = parent._scene.get();
+    if (!scene) return;
+
+    assert(parent.dynamic_sources != nullptr);
+    auto& source_list = *parent.dynamic_sources.get();
+    assert(source_list.size() == scene->file_sources() + scene->live_sources());
+
+    // TODO: previous (dynamic) "state"
+
+    auto [rolling, transport_frame] = parent.get_transport_state();
+
+    // TODO: get "state" stuff
+
+    // TODO: check for errors (check exceptions)
+    scene->update_audio_data(rolling);
+
+    // NB: Functions for checking dynamic sources are not thread safe,
+    //     therefore we call them in a loop from a single thread.
+
+    for (auto& source: apf::cast_proxy<typename Derived::Source, rtlist_t>(
+          parent._source_list))
+    {
+      size_t source_number = source.dynamic_number;
+      if (source_number == static_cast<size_t>(-1))
+      {
+        continue;  // This source is not part of the dynamic ASDF scene
+      }
+      auto transform = scene->get_source_transform(
+          source_number, transport_frame);
+      auto& target_transform = source_list[source_number];
+      if (transform)
+      {
+        if (target_transform == std::nullopt)
+        {
+          source.active.set_from_rt_thread(true);
+          target_transform = ssr::Transform{};
+        }
+
+        auto rotation = transform->rot;
+        if (rotation != target_transform->rot)
+        {
+          target_transform->rot = rotation;
+          if (rotation)
+          {
+            source.rotation.set_from_rt_thread(quat{*rotation});
+          }
+        }
+
+        auto position = transform->pos;
+        if (position != target_transform->pos)
+        {
+          target_transform->pos = position;
+          if (position)
+          {
+            source.position.set_from_rt_thread(vec3{*position});
+          }
+        }
+
+        // TODO: handle other Transform members!
+      }
+      else
+      {
+        if (target_transform)
+        {
+          source.active.set_from_rt_thread(false);
+        }
+        target_transform = std::nullopt;
+      }
+    }
+  }
+};
+
+
+/// This has to be called while the controller lock is held.
+/// All existing sources must be removed before calling this.
+template<typename Derived>
+std::vector<std::string>
+RendererBase<Derived>::load_dynamic_scene(const std::string& scene_file_name)
+{
+  // TODO: pass input prefix?
+
+  assert(_source_map.empty());
+
+  // NB: This is important because the audio thread checks _scene first
+  _scene = nullptr;
+
+  // Wait for sources to be deleted, to avoid source ID clashes with new ones.
+  // Also, make sure the audio thread runs at least once with an empty scene.
+  this->wait_for_rt_thread();
+
+  // TODO: make configuration option!
+  float buffer_time = 2.0;  // seconds, will be rounded up to JACK block size increments
+  float sleep_time = 0.1;  // seconds
+  uint32_t buffer_blocks = std::ceil(buffer_time * this->sample_rate() /
+    this->block_size());
+  uint64_t usleeptime = sleep_time * 1000.0f * 1000.0f;
+  auto scene = std::make_unique<DynamicScene>(
+      scene_file_name, this->sample_rate(), this->block_size(),
+      buffer_blocks, usleeptime);
+
+  auto file_sources = scene->file_sources();
+  auto live_sources = scene->live_sources();
+  auto total_sources = file_sources + live_sources;
+
+  // TODO: different way to store list of dynamic sources?
+
+  // TODO: extend with "state" information?
+  this->dynamic_sources = std::make_unique<dynamic_source_list_t>(
+      total_sources);
+
+  // TODO: reset "state buffer"?
+
+  std::vector<std::string> source_ids;
+  source_ids.reserve(total_sources);
+
+  for (size_t i = 0; i < total_sources; i++)
+  {
+    apf::parameter_map p;
+    std::string id = scene->get_source_id(i);
+
+    // TODO:
+    //p.set("properties-file", ???);
+
+    const float* file_source_ptr = nullptr;
+    if (i < file_sources)
+    {
+      file_source_ptr = scene->file_source_ptr(i);
+    }
+    else
+    {
+      // TODO: pass JACK port
+      //p.set("connect-to", input_prefix + ???);
+    }
+
+    p.set("dynamic_number", i);
+
+    try
+    {
+      id = this->add_source(id, p, file_source_ptr);
+    }
+    catch (std::exception& e)
+    {
+      this->rem_all_sources();
+      throw;
+    }
+    assert(id != "");
+    source_ids.push_back(id);
+  }
+  _scene = std::move(scene);
+  return source_ids;
+}
+#endif
+
+
 /// A sound source.
 template<typename Derived>
 class RendererBase<Derived>::Source
@@ -381,6 +597,10 @@ class RendererBase<Derived>::Source
   public:
     using sample_type
       = typename std::iterator_traits<typename Input::iterator>::value_type;
+#ifdef ENABLE_DYNAMIC_ASDF
+    // dynamic scenes only support float
+    static_assert(std::is_same_v<sample_type, float>);
+#endif
 
     friend class RendererBase<Derived>;  // rem_source() needs access to _input
 
@@ -388,6 +608,9 @@ class RendererBase<Derived>::Source
     {
       Derived* parent = nullptr;
       const typename Derived::Input* input = nullptr;
+#ifdef ENABLE_DYNAMIC_ASDF
+      const float* file_source_ptr = nullptr;
+#endif
       apf::CommandQueue* fifo = nullptr;
       std::string id;
 
@@ -406,11 +629,32 @@ class RendererBase<Derived>::Source
       , model(*p.fifo, "point")
       , weighting_factor()
       , id(p.id)
-      , _input(*(p.input ? p.input : throw std::logic_error(
-              "Bug (RendererBase::Source): input == NULL!")))
+#ifdef ENABLE_DYNAMIC_ASDF
+      , dynamic_number(p.template get<size_t>("dynamic_number", -1))
+#endif
+      , _input(p.input)
       , _pre_fader_level()
       , _level()
-    {}
+    {
+#ifdef ENABLE_DYNAMIC_ASDF
+      if (p.input == nullptr)
+      {
+        if (p.file_source_ptr == nullptr)
+        {
+          throw std::logic_error("Bug (RendererBase::Source): input == NULL "
+              "&& file_source_ptr == NULL!");
+        }
+        static_assert(std::is_same_v<typename Input::iterator, const float*>);
+        this->_begin = p.file_source_ptr;
+        this->_end = p.file_source_ptr + this->parent.block_size();
+      }
+#else
+      if (p.input == nullptr)
+      {
+        throw std::logic_error("Bug (RendererBase::Source): input == NULL!");
+      }
+#endif
+    }
 
     APF_PROCESS(Source, SourceBase)
     {
@@ -421,6 +665,18 @@ class RendererBase<Derived>::Source
 
     // In the default case, the output levels are ignored
     bool get_output_levels(sample_type*, sample_type*) const { return false; }
+
+    std::string port_name() const
+    {
+      if (_input == nullptr)
+      {
+        return "";
+      }
+      else
+      {
+        return _input->port_name();
+      }
+    }
 
     void connect() {}
     void disconnect() {}
@@ -437,9 +693,12 @@ class RendererBase<Derived>::Source
     apf::BlockParameter<sample_type> weighting_factor;
 
     const std::string id;
+#ifdef ENABLE_DYNAMIC_ASDF
+    const size_t dynamic_number;
+#endif
 
   protected:
-    const typename Derived::Input& _input;
+    const typename Derived::Input* _input;
 
   private:
     void _process();
@@ -460,8 +719,20 @@ class RendererBase<Derived>::Source
 template<typename Derived>
 void RendererBase<Derived>::Source::_process()
 {
-  this->_begin = _input.begin();
-  this->_end = _input.end();
+#ifdef ENABLE_DYNAMIC_ASDF
+  if (_input == nullptr)
+  {
+    // NB: _begin and _end were initialized in the constructor.
+  }
+  else
+  {
+#endif
+    assert(_input != nullptr);
+    this->_begin = _input->begin();
+    this->_end = _input->end();
+#ifdef ENABLE_DYNAMIC_ASDF
+  }
+#endif
 
   if (!this->parent.state.processing || this->mute || !this->active)
   {
