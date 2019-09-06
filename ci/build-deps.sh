@@ -5,6 +5,13 @@ set -euo pipefail
 wget https://www.intersense.com/wp-content/uploads/2018/12/InterSense_SDK_4.2381.zip
 unzip InterSense_SDK_4.2381.zip
 
+git clone https://github.com/AudioSceneDescriptionFormat/asdf-rust.git
+cd asdf-rust
+git submodule update --init
+cargo cinstall --release --prefix=/usr/local --destdir=temp
+sudo cp -r temp/usr/local/* /usr/local/
+cd ..
+
 if [ "$TRAVIS_OS_NAME" = osx ]
 then
   git clone git://github.com/zaphoyd/websocketpp.git

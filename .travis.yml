@@ -1,4 +1,6 @@
-language: cpp
+language: rust
+rust:
+  - stable
 dist: bionic
 
 git:
@@ -113,6 +115,7 @@ matrix:
 
 before_install:
   - if [ "$TRAVIS_OS_NAME" = osx ]; then brew link qt --force; fi
+  - cargo install cargo-c --force
 
 install:
   - ci/build-deps.sh
