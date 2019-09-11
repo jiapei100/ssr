@@ -38,6 +38,13 @@ namespace ssr
 
 using frame_count_t = uint64_t;
 
+struct DynamicSource
+{
+  std::string id;
+  std::string name;
+  std::string model;
+};
+
 struct Transform
 {
   std::optional<quat> rot{};
@@ -83,16 +90,12 @@ public:
     return 0;
   }
 
-  std::string get_source_id(size_t index) const {
+  DynamicSource get_source(size_t index) const {
     assert(_ptr);
-    char* ptr = asdf_scene_get_source_id(_ptr, index);
-    std::string id = ptr;
-    asdf_string_free(ptr);
-    return id;
-  }
-
-  void free_source_id(char* id) const {
-    asdf_string_free(id);
+    auto* source = asdf_scene_get_source(_ptr, index);
+    DynamicSource result{source->id, source->name, source->model};
+    asdf_source_free(source);
+    return result;
   }
 
   const float* file_source_ptr(size_t index) const

@@ -1836,10 +1836,10 @@ Controller<Renderer>::_load_dynamic_asdf(const std::string& scene_file_name)
 {
   assert(!_conf.follow);
 
-  std::vector<std::string> source_id_list;
+  std::vector<DynamicSource> sources;
   try
   {
-    source_id_list = _renderer.load_dynamic_scene(scene_file_name);
+    sources = _renderer.load_dynamic_scene(scene_file_name);
   }
   catch (std::exception& e)
   {
@@ -1855,7 +1855,7 @@ Controller<Renderer>::_load_dynamic_asdf(const std::string& scene_file_name)
 
   // TODO: scene_ptr->length();  // in samples
 
-  auto total = source_id_list.size();
+  auto total = sources.size();
 
   // NB: It is safe to write to _query_state here, because
   //     query_state::update() also blocks on the controller lock.
@@ -1865,11 +1865,11 @@ Controller<Renderer>::_load_dynamic_asdf(const std::string& scene_file_name)
 
   for (size_t i = 0; i < total; i++)
   {
-    auto id = source_id_list[i];
+    const auto& source = sources[i];
 
-    _query_state.source_ids.push_back(id);
+    _query_state.source_ids.push_back(source.id);
 
-    _publish(&api::SceneInformationEvents::new_source, id);
+    _publish(&api::SceneInformationEvents::new_source, source.id);
 
 #if 0
     const std::string& source_port = _renderer.get_source(id)->port_name();
@@ -1884,22 +1884,20 @@ Controller<Renderer>::_load_dynamic_asdf(const std::string& scene_file_name)
 #endif
 
     _publish(&api::SceneInformationEvents::source_property
-        , id, "port-name", "???");
+        , source.id, "port-name", "???");
     _publish(&api::SceneInformationEvents::source_property
-        , id, "audio-file", "???");
+        , source.id, "audio-file", "???");
     _publish(&api::SceneInformationEvents::source_property
-        , id, "audio-file-channel", "???");
+        , source.id, "audio-file-channel", "???");
     _publish(&api::SceneInformationEvents::source_property
-        , id, "audio-file-length", "???");
+        , source.id, "audio-file-length", "???");
 
     // TODO:
     //_publish(&api::SceneInformationEvents::source_property
     //    , id, "properties-file", properties_file);
 
-    //_publish(&api::SceneControlEvents::source_name, id, name);
-    //_publish(&api::SceneControlEvents::source_model, id, model);
-    //_publish(&api::SceneControlEvents::source_position, id, position);
-    //_publish(&api::SceneControlEvents::source_rotation, id, rotation);
+    _publish(&api::SceneControlEvents::source_name, source.id, source.name);
+    _publish(&api::SceneControlEvents::source_model, source.id, source.model);
     //_publish(&api::SceneControlEvents::source_fixed, id, fixed);
     //_publish(&api::SceneControlEvents::source_volume, id, volume);
     //_publish(&api::SceneControlEvents::source_mute, id, mute);

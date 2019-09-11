@@ -163,7 +163,7 @@ class RendererBase : public apf::MimoProcessor<Derived
 #ifdef ENABLE_DYNAMIC_ASDF
     struct Process;
 
-    std::vector<std::string>
+    std::vector<DynamicSource>
     load_dynamic_scene(const std::string& scene_file_name);
 #endif
 
@@ -506,7 +506,7 @@ struct RendererBase<Derived>::Process : _base::Process
 /// This has to be called while the controller lock is held.
 /// All existing sources must be removed before calling this.
 template<typename Derived>
-std::vector<std::string>
+std::vector<DynamicSource>
 RendererBase<Derived>::load_dynamic_scene(const std::string& scene_file_name)
 {
   // TODO: pass input prefix?
@@ -542,13 +542,13 @@ RendererBase<Derived>::load_dynamic_scene(const std::string& scene_file_name)
 
   // TODO: reset "state buffer"?
 
-  std::vector<std::string> source_ids;
-  source_ids.reserve(total_sources);
+  std::vector<DynamicSource> sources;
+  sources.reserve(total_sources);
 
   for (size_t i = 0; i < total_sources; i++)
   {
     apf::parameter_map p;
-    std::string id = scene->get_source_id(i);
+    auto source = scene->get_source(i);
 
     // TODO:
     //p.set("properties-file", ???);
@@ -568,18 +568,20 @@ RendererBase<Derived>::load_dynamic_scene(const std::string& scene_file_name)
 
     try
     {
-      id = this->add_source(id, p, file_source_ptr);
+      auto id = this->add_source(source.id, p, file_source_ptr);
+      assert(source.id == "" || id == source.id);  // IDs must be unique
+      assert(id != "");
+      source.id = id;
     }
     catch (std::exception& e)
     {
       this->rem_all_sources();
       throw;
     }
-    assert(id != "");
-    source_ids.push_back(id);
+    sources.push_back(std::move(source));
   }
   _scene = std::move(scene);
-  return source_ids;
+  return sources;
 }
 #endif
 
