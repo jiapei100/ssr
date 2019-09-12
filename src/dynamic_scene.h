@@ -137,6 +137,10 @@ public:
       {
         result->pos = vec3{t.pos[0], t.pos[1], t.pos[2]};
       }
+      if (t.flags & ASDF_TRANSFORM_ROT)
+      {
+        result->rot = quat{t.rot_s, vec3{t.rot_v[0], t.rot_v[1], t.rot_v[2]}};
+      }
       // TODO: other fields
     }
     return result;
