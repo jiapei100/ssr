@@ -654,13 +654,13 @@ class Controller<Renderer>::query_state
                 continue;
               }
 
-              if (new_source->rot && new_source->rot != old_source->rot)
+              if (new_source->rot != old_source->rot)
               {
-                control->source_rotation(source_id, quat{*new_source->rot});
+                control->source_rotation(source_id, new_source->rot);
               }
-              if (new_source->pos && new_source->pos != old_source->pos)
+              if (new_source->pos != old_source->pos)
               {
-                control->source_position(source_id, vec3{*new_source->pos});
+                control->source_position(source_id, new_source->pos);
               }
 
               // TODO: go through the rest of the properties
@@ -669,14 +669,8 @@ class Controller<Renderer>::query_state
             {
               if (!new_source) { continue; }
 
-              if (new_source->rot)
-              {
-                control->source_rotation(source_id, quat{*new_source->rot});
-              }
-              if (new_source->pos)
-              {
-                control->source_position(source_id, vec3{*new_source->pos});
-              }
+              control->source_rotation(source_id, new_source->rot);
+              control->source_position(source_id, new_source->pos);
               // TODO: go through the rest of the properties
 
               control->source_active(source_id, true);

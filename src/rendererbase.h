@@ -472,20 +472,14 @@ struct RendererBase<Derived>::Process : _base::Process
         if (rotation != target_transform->rot)
         {
           target_transform->rot = rotation;
-          if (rotation)
-          {
-            source.rotation.set_from_rt_thread(quat{*rotation});
-          }
+          source.rotation.set_from_rt_thread(rotation);
         }
 
         auto position = transform->pos;
         if (position != target_transform->pos)
         {
           target_transform->pos = position;
-          if (position)
-          {
-            source.position.set_from_rt_thread(vec3{*position});
-          }
+          source.position.set_from_rt_thread(position);
         }
 
         // TODO: handle other Transform members!

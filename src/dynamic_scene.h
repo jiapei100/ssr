@@ -47,8 +47,8 @@ struct DynamicSource
 
 struct Transform
 {
-  std::optional<quat> rot{};
-  std::optional<vec3> pos{};
+  quat rot{};
+  vec3 pos{};
 
   // TODO: more stuff
 };
@@ -130,18 +130,13 @@ public:
     assert(_ptr);
     auto t = asdf_scene_get_source_transform(_ptr, source_idx, frame);
     std::optional<Transform> result{};
-    if (t.flags & ASDF_TRANSFORM_ACTIVE)
+    if (t.active)
     {
-      result = Transform{};
-      if (t.flags & ASDF_TRANSFORM_POS)
-      {
-        result->pos = vec3{t.pos[0], t.pos[1], t.pos[2]};
-      }
-      if (t.flags & ASDF_TRANSFORM_ROT)
-      {
-        result->rot = quat{t.rot_s, vec3{t.rot_v[0], t.rot_v[1], t.rot_v[2]}};
-      }
-      // TODO: other fields
+      result = Transform{
+        quat{t.rot_s, vec3{t.rot_v[0], t.rot_v[1], t.rot_v[2]}},
+        vec3{t.pos[0], t.pos[1], t.pos[2]},
+        // TODO: other fields
+      };
     }
     return result;
   }
