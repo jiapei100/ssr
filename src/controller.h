@@ -657,10 +657,12 @@ class Controller<Renderer>::query_state
               if (new_source->rot != old_source->rot)
               {
                 control->source_rotation(source_id, new_source->rot);
+                old_source->rot = new_source->rot;
               }
               if (new_source->pos != old_source->pos)
               {
                 control->source_position(source_id, new_source->pos);
+                old_source->pos = new_source->pos;
               }
 
               // TODO: go through the rest of the properties

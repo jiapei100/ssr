@@ -112,6 +112,7 @@ public:
   /// This is realtime-safe
   void update_audio_data(bool rolling)
   {
+    if (_file_source_ptrs.empty()) { return; };
     assert(_ptr);
     auto success = asdf_scene_get_audio_data(
         _ptr, _file_source_ptrs.data(), rolling);
