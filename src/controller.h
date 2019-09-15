@@ -614,6 +614,7 @@ class Controller<Renderer>::query_state
         std::copy(renderer_sources.begin(), renderer_sources.end()
             , query_sources.begin());
       }
+      _dynamic_reference = _renderer.dynamic_reference;
 #endif
     }
 
@@ -679,6 +680,17 @@ class Controller<Renderer>::query_state
               old_source = new_source;
             }
           }
+        }
+
+        if (_dynamic_reference.rot != _old_dynamic_reference.rot)
+        {
+          control->reference_rotation(_dynamic_reference.rot);
+          _old_dynamic_reference.rot = _dynamic_reference.rot;
+        }
+        if (_dynamic_reference.pos != _old_dynamic_reference.pos)
+        {
+          control->reference_position(_dynamic_reference.pos);
+          _old_dynamic_reference.pos = _dynamic_reference.pos;
         }
 #endif
         _controller._publish(&api::TransportFrameEvents::transport_frame
@@ -759,6 +771,8 @@ class Controller<Renderer>::query_state
 #ifdef ENABLE_DYNAMIC_ASDF
     std::unique_ptr<dynamic_source_list_t> _dynamic_sources;
     dynamic_source_list_t _old_dynamic_sources;
+    Transform _dynamic_reference{};
+    Transform _old_dynamic_reference{};
 #endif
 };
 

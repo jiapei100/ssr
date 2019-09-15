@@ -234,6 +234,8 @@ class RendererBase : public apf::MimoProcessor<Derived
     using dynamic_source_list_t = std::vector<std::optional<ssr::Transform>>;
     // NB: It's probably not a good idea to make this public:
     apf::SharedData<std::unique_ptr<dynamic_source_list_t>> dynamic_sources;
+    // NB: This is only ever accessed from the realtime thread:
+    Transform dynamic_reference{};
 #endif
 
   protected:
@@ -437,14 +439,25 @@ struct RendererBase<Derived>::Process : _base::Process
     auto& source_list = *parent.dynamic_sources.get();
     assert(source_list.size() == scene->file_sources() + scene->live_sources());
 
-    // TODO: previous (dynamic) "state"
-
     auto [rolling, transport_frame] = parent.get_transport_state();
-
-    // TODO: get "state" stuff
 
     // TODO: check for errors (check exceptions)
     scene->update_audio_data(rolling);
+
+    {
+      auto t = scene->get_reference_transform(transport_frame);
+      auto rotation = t.rot;
+      if (rotation != parent.dynamic_reference.rot) {
+        parent.dynamic_reference.rot = rotation;
+        parent.state.reference_rotation.set_from_rt_thread(rotation);
+      }
+      auto position = t.pos;
+      if (position != parent.dynamic_reference.pos) {
+        parent.dynamic_reference.pos = position;
+        parent.state.reference_position.set_from_rt_thread(position);
+      }
+      // TODO: set other transform members
+    }
 
     // NB: Functions for checking dynamic sources are not thread safe,
     //     therefore we call them in a loop from a single thread.

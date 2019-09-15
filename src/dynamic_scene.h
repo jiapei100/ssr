@@ -47,10 +47,21 @@ struct DynamicSource
 
 struct Transform
 {
-  quat rot{};
-  vec3 pos{};
+  quat rot;
+  vec3 pos;
 
   // TODO: more stuff
+
+  Transform()
+    : rot{0.0f, {1.0f, 0.0f, 0.0f}}
+    , pos{}
+  {}
+
+  Transform(const AsdfTransform& t)
+    : rot{t.rot_s, vec3{t.rot_v[0], t.rot_v[1], t.rot_v[2]}}
+    , pos{t.pos[0], t.pos[1], t.pos[2]}
+    // TODO: other fields
+  {}
 };
 
 class DynamicScene
@@ -133,13 +144,17 @@ public:
     std::optional<Transform> result{};
     if (t.active)
     {
-      result = Transform{
-        quat{t.rot_s, vec3{t.rot_v[0], t.rot_v[1], t.rot_v[2]}},
-        vec3{t.pos[0], t.pos[1], t.pos[2]},
-        // TODO: other fields
-      };
+      result = Transform{t};
     }
     return result;
+  }
+
+  Transform get_reference_transform(frame_count_t frame) const
+  {
+    assert(_ptr);
+    auto t = asdf_scene_get_reference_transform(_ptr, frame);
+    assert(t.active);
+    return {t};
   }
 
 private:
