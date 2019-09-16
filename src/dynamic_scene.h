@@ -104,6 +104,10 @@ public:
   DynamicSource get_source(size_t index) const {
     assert(_ptr);
     auto* source = asdf_scene_get_source(_ptr, index);
+    if (source == nullptr)
+    {
+      throw std::runtime_error(asdf_scene_last_error());
+    }
     DynamicSource result{source->id, source->name, source->model};
     asdf_source_free(source);
     return result;
@@ -129,8 +133,7 @@ public:
         _ptr, _file_source_ptrs.data(), rolling);
     if (!success)
     {
-      // TODO: use asdf_scene_last_error() once it is supported
-      throw std::runtime_error("Unrecoverable error getting audio data");
+      throw std::runtime_error(asdf_scene_last_error());
     }
   }
 
